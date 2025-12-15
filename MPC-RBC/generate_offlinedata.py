@@ -195,7 +195,7 @@ def save_offline_data(
         horizon=horizon,
         theta_candidates=theta_candidates,
         hlimit_ft=hlimit_ft,
-        n_episodes=10,
+        n_episodes=20,
         episode_len=1500,
         rng=rng,
     )
