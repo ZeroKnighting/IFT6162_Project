@@ -1203,27 +1203,28 @@ def mpc_benchmark() -> None:
     cin_f = np.full_like(qin_t, EMC, dtype=float)
 
     MD_t = np.column_stack((qin_t, cin_t))  # measured disturbances (true)
+    MD_f = np.column_stack((qin_f, cin_f))  # forecast disturbances (imperfect)
     # MD (forecast) is (qin_f, cin_f) implicitly via arrays
 
     # model (spline interpolation if SciPy installed)
     model = PondCSTR(use_spline=True)
 
     horizon = 96  # 24 hr at 15-min steps
-    theta_candidates = np.linspace(0.0, 1.0, 11)
+    theta_candidates = np.linspace(0.0, 1.0, 21)
 
     x0 = np.array([0.01, 0.0], dtype=float)
     u0 = 1.0
     hlimit_ft = 10.0
 
     # stochastic settings
-    Ns = 10
-    epsilon = 0.05
-    sigma_q = 0.30
-    sigma_c = 0.30
-    # sigma_q = 0.01
-    # sigma_c = 0.01
-    # epsilon = 0.05
     # Ns = 10
+    # epsilon = 0.05
+    # sigma_q = 0.30
+    # sigma_c = 0.30
+    sigma_q = 0.05
+    sigma_c = 0.05
+    epsilon = 0.05
+    Ns = 10
 
     # Use these will make stochastic MPC equivalent to deterministic MPC
     # sigma_q = 0.0
@@ -1257,7 +1258,7 @@ def mpc_benchmark() -> None:
         u0=u0,
         qin_forecast=qin_f,
         cin_forecast=cin_f,
-        MD_exec_true=MD_t,
+        MD_exec_true=MD_f,
         horizon=horizon,
         theta_candidates=theta_candidates,
         hlimit_ft=hlimit_ft,
@@ -1267,40 +1268,40 @@ def mpc_benchmark() -> None:
     # ------------------------------------------------------------------
     # MPC-true (perfect forecast uses MD_t)
     # ------------------------------------------------------------------
-    # print("\nDeterministic MPC-true simulation...")
-    # t0 = time.perf_counter()
-    # traj_mpc_true = run_deterministic_mpc(
-    #     model=model,
-    #     x0=x0,
-    #     u0=u0,
-    #     qin_forecast=qin_t,
-    #     cin_forecast=cin_t,
-    #     MD_exec_true=MD_t,
-    #     horizon=horizon,
-    #     theta_candidates=theta_candidates,
-    #     hlimit_ft=hlimit_ft,
-    # )
-    # print(f"MPC-true done in {time.perf_counter() - t0:.2f}s")
+    print("\nDeterministic MPC-true simulation...")
+    t0 = time.perf_counter()
+    traj_mpc_true = run_deterministic_mpc(
+        model=model,
+        x0=x0,
+        u0=u0,
+        qin_forecast=qin_t,
+        cin_forecast=cin_t,
+        MD_exec_true=MD_t,
+        horizon=horizon,
+        theta_candidates=theta_candidates,
+        hlimit_ft=hlimit_ft,
+    )
+    print(f"MPC-true done in {time.perf_counter() - t0:.2f}s")
 
     # # ------------------------------------------------------------------
     # # MPC-EKF (plan with imperfect forecast; EKF uses c measurement)
     # # ------------------------------------------------------------------
-    # print("\nMPC-EKF simulation (no measurement noise by default)...")
-    # t0 = time.perf_counter()
-    # traj_mpc_ekf = run_mpc_ekf(
-    #     model=model,
-    #     x0=x0,
-    #     u0=u0,
-    #     qin_forecast=qin_f,
-    #     cin_forecast=cin_f,
-    #     MD_exec_true=MD_t,
-    #     horizon=horizon,
-    #     theta_candidates=theta_candidates,
-    #     hlimit_ft=hlimit_ft,
-    #     meas_noise_std=0.0,
-    #     rng=rng,
-    # )
-    # print(f"MPC-EKF done in {time.perf_counter() - t0:.2f}s")
+    print("\nMPC-EKF simulation (no measurement noise by default)...")
+    t0 = time.perf_counter()
+    traj_mpc_ekf = run_mpc_ekf(
+        model=model,
+        x0=x0,
+        u0=u0,
+        qin_forecast=qin_f,
+        cin_forecast=cin_f,
+        MD_exec_true=MD_t,
+        horizon=horizon,
+        theta_candidates=theta_candidates,
+        hlimit_ft=hlimit_ft,
+        meas_noise_std=0.0,
+        rng=rng,
+    )
+    print(f"MPC-EKF done in {time.perf_counter() - t0:.2f}s")
 
     # ------------------------------------------------------------------
     # Stochastic MPC (scenario-based, chance constraint)
@@ -1395,21 +1396,21 @@ def mpc_benchmark() -> None:
     # ------------------------------------------------------------------
     # RBC baselines (use q_desired = max(truey))
     # ------------------------------------------------------------------
-    # print("\nRBC simulations...")
-    # q_desired_cfs = float(np.max(traj_mpc_true.qout_cfs))
-    # climit = 5.0
+    print("\nRBC simulations...")
+    q_desired_cfs = float(np.max(traj_mpc_true.qout_cfs))
+    climit = 5.0
 
-    # traj_rbc_out = rbc_outflow(model, MD_t, x0, q_desired_cfs=q_desired_cfs, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
-    # traj_rbc_con = rbc_concentration(model, MD_t, x0, climit=climit, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
-    # traj_rbc_both = rbc_both(model, MD_t, x0, climit=climit, q_desired_cfs=q_desired_cfs, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
+    traj_rbc_out = rbc_outflow(model, MD_t, x0, q_desired_cfs=q_desired_cfs, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
+    traj_rbc_con = rbc_concentration(model, MD_t, x0, climit=climit, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
+    traj_rbc_both = rbc_both(model, MD_t, x0, climit=climit, q_desired_cfs=q_desired_cfs, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
 
     # ------------------------------------------------------------------
     # Compare
     # ------------------------------------------------------------------
     trajs = {
-        # "MPC-true": traj_mpc_true,
+        "MPC-true": traj_mpc_true,
         "MPC-false": traj_mpc_false,
-        # "MPC-EKF": traj_mpc_ekf,
+        "MPC-EKF": traj_mpc_ekf,
         "Stochastic MPC": traj_smpc,
         "LAO-pruned MPC": traj_lao_pruned,
         "LAO-terminal-value MPC": traj_lao_term,
