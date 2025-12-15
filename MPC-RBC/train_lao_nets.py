@@ -63,6 +63,38 @@ class PolicyNet(nn.Module):
         return self.net(x)
 
 
+
+class ValueNet_real(nn.Module):
+    def __init__(self, in_dim: int = 2, hidden: int = 128):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class PolicyNet_real(nn.Module):
+    def __init__(self, in_dim: int = 2, hidden: int = 128):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 2),
+            nn.Sigmoid(),  # clamp to (0,1)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
 # ---------------------------
 # IO helpers
 # ---------------------------
@@ -237,6 +269,7 @@ def main() -> None:
     ap.add_argument("--patience", type=int, default=15)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
+    ap.add_argument("--large_model", default=False,action="store_true", help="Use larger model architecture for real case")
     
     args = ap.parse_args()
 
@@ -306,9 +339,14 @@ def main() -> None:
     train_loader = DataLoader(train_ds, batch_size=cfg.batch, shuffle=True, drop_last=False)
     val_loader = DataLoader(val_ds, batch_size=cfg.batch, shuffle=False, drop_last=False)
 
-    # Models
-    pnet = PolicyNet(in_dim=X_train.shape[1], hidden=cfg.hidden).to(device)
-    vnet = ValueNet(in_dim=X_train.shape[1], hidden=cfg.hidden).to(device)
+    # Models]
+
+    if ("real_case" in args.data) or args.large_model:
+        pnet = PolicyNet_real(in_dim=X_train.shape[1], hidden=cfg.hidden).to(device)
+        vnet = ValueNet_real(in_dim=X_train.shape[1], hidden=cfg.hidden).to(device)
+    else:
+        pnet = PolicyNet(in_dim=X_train.shape[1], hidden=cfg.hidden).to(device)
+        vnet = ValueNet(in_dim=X_train.shape[1], hidden=cfg.hidden).to(device)
 
     metrics = train(pnet, vnet, train_loader, val_loader, device, cfg)
 

@@ -1403,9 +1403,9 @@ def mpc_benchmark() -> None:
         "Stochastic MPC": traj_smpc,
         "LAO-pruned MPC": traj_lao_pruned,
         "LAO-terminal-value MPC": traj_lao_term,
-        # "RBC-Concentration": traj_rbc_con,
-        # "RBC-Outflow": traj_rbc_out,
-        # "RBC-Both": traj_rbc_both,
+        "RBC-Concentration": traj_rbc_con,
+        "RBC-Outflow": traj_rbc_out,
+        "RBC-Both": traj_rbc_both,
         "Passive": traj_passive,
     }
 

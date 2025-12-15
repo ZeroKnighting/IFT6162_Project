@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Callable
 
 import numpy as np
 import pandas as pd
@@ -20,6 +20,9 @@ except Exception:
 
 from typing import Tuple
 import numpy as np
+
+from lao_mpc_controller_v2 import run_lao_pruned_mpc
+from lao_terminal_value_mpc_v2 import run_lao_terminal_value_mpc
 
 
 # =============================================================================
@@ -294,6 +297,94 @@ def plan_theta_pair_grid_fast(
 
     best = int(np.argmin(cost))
     return float(th0[best]), float(th1[best])
+
+
+def plan_theta_pair_grid_fast_with_cost(
+    model,
+    xk: np.ndarray,
+    q_forecast: np.ndarray,
+    c_forecast: np.ndarray,
+    theta_candidates: np.ndarray,
+    hlimit_ft: float,
+    warmstart: Tuple[float, float] = (0.0, 0.0),
+    terminal_value_fn: Optional[TerminalFn] = None,
+    terminal_weight: float = 1.0,
+) -> Tuple[float, float, float]:
+    cand = np.asarray(theta_candidates, dtype=float)
+    th0_grid, th1_grid = np.meshgrid(cand, cand, indexing="ij")
+    th0 = th0_grid.reshape(-1)  # (P,)
+    th1 = th1_grid.reshape(-1)  # (P,)
+    P = th0.size
+
+    H = int(len(q_forecast))
+    qf = np.asarray(q_forecast, dtype=float)
+    cf = np.asarray(c_forecast, dtype=float)
+
+    h = np.full(P, float(xk[0]), dtype=float)
+    c = np.full(P, float(xk[1]), dtype=float)
+
+    violated = np.zeros(P, dtype=bool)
+
+    sum_cq2 = np.zeros(P, dtype=float)
+    sum_q   = np.zeros(P, dtype=float)
+    sum_q2  = np.zeros(P, dtype=float)
+
+    exp_kdt = float(np.exp(-model.k * model.dt))
+
+    for j in range(H):
+        theta = th0 if j == 0 else th1
+
+        A = model.area_vec(h)
+        qout = model.q_out_vec(h, theta)
+
+        cq = c * qout
+        sum_cq2 += cq * cq
+        sum_q   += qout
+        sum_q2  += qout * qout
+
+        q_in = qf[j]
+        c_in = cf[j]
+
+        h_next = np.maximum(0.0, h + (model.dt / A) * (q_in - qout))
+
+        den = np.maximum((A * h) + q_in * model.dt, 1e-6)
+        c_next = np.where(
+            h > 0.0,
+            (c * A * h * exp_kdt + c_in * q_in * model.dt) / den,
+            0.0,
+        )
+
+        violated |= (h_next > hlimit_ft)
+        h, c = h_next, c_next
+
+    qbar = sum_q / max(H, 1)
+    smooth = sum_q2 - H * (qbar * qbar)
+
+    cost = 5.0 * sum_cq2 + smooth + 900.0 * (h * h)
+
+    if terminal_value_fn is not None:
+        XH = np.column_stack([h, c])  # (P,2)
+
+        V = terminal_value_fn(XH)
+        V = np.asarray(V, dtype=float)
+
+        # allow scalar-fn fallback (if user passed x:(2,)->scalar)
+        if V.shape == ():  # returned a scalar by mistake
+            # slow fallback, but should not happen if you pass batch fn
+            V = np.array([float(terminal_value_fn(XH[i])) for i in range(P)], dtype=float)
+        else:
+            V = V.reshape(-1)  # (P,)
+
+        if V.shape[0] != P:
+            raise ValueError(f"terminal_value_fn must return shape (P,) or (P,1); got {V.shape}")
+
+        cost = cost + float(terminal_weight) * V
+
+    cost[violated] = np.inf
+
+    best = int(np.argmin(cost))
+    return float(th0[best]), float(th1[best]), float(cost[best])
+
 
 
 def plan_theta_pair_stochastic_fast(
@@ -997,6 +1088,84 @@ def save_results(
         print(f"\nSciPy not available. Saved results to: {out_path.with_suffix('.npz')}")
 
 
+
+def tuning_terminal_value(
+    model,
+    x0, u0,
+    qin_f, cin_f,
+    MD_t,
+    theta_candidates,
+    hlimit_ft,
+    # baseline trajectory (MPC-false H=96)
+    traj_baseline,
+    ckpt_path="lao_models.pt",
+    horizons=(24, 32, 48),
+    lambdas=(0.1, 0.2, 0.5, 1.0, 2.0),
+):
+    rows = []
+
+    # baseline metrics (single-controller df)
+    base_df = compute_metrics({"BASELINE": traj_baseline}, horizon=96, model=model)
+    base = base_df.loc["BASELINE"]
+
+    for H in horizons:
+        for lam in lambdas:
+            name = f"LAO-term(H={H},λ={lam})"
+            traj = run_lao_terminal_value_mpc(
+                model=model,
+                x0=x0,
+                u0=u0,
+                qin_forecast=qin_f,
+                cin_forecast=cin_f,
+                MD_exec_true=MD_t,
+                horizon=H,
+                theta_candidates=theta_candidates,
+                hlimit_ft=hlimit_ft,
+                ckpt_path=ckpt_path,
+                terminal_weight=float(lam),
+            )
+
+            dt = traj.elapsed_time
+            df = compute_metrics({name: traj}, horizon=H, model=model)
+            r = df.loc[name]
+
+            rows.append({
+                "name": name,
+                "H": H,
+                "lambda": lam,
+                "runtime_s": dt,
+
+                # absolute metrics
+                "Overflow_m3": r["Overflow_m3"],
+                "PeakQ_m3s": r["PeakQ_m3s"],
+                "Load": r["Load"],
+                "Effort": r["Effort"],
+                "Smooth": r["Smooth"],
+
+                # relative to baseline (multiplicative ratio)
+                "PeakQ_ratio": r["PeakQ_m3s"] / base["PeakQ_m3s"] if base["PeakQ_m3s"] > 0 else np.nan,
+                "Load_ratio":  r["Load"]     / base["Load"]      if base["Load"] > 0 else np.nan,
+                "Smooth_ratio":r["Smooth"]   / base["Smooth"]    if base["Smooth"] > 0 else np.nan,
+                "Effort_ratio":r["Effort"]   / base["Effort"]    if base["Effort"] > 0 else np.nan,
+            })
+
+            print(f"[DONE] H={H}, λ={lam} | time={dt:.2f}s | "
+                  f"PeakQ={r['PeakQ_m3s']:.4g} (x{rows[-1]['PeakQ_ratio']:.2f}) | "
+                  f"Smooth={r['Smooth']:.4g} (x{rows[-1]['Smooth_ratio']:.2f}) | "
+                  f"Load={r['Load']:.4g} (x{rows[-1]['Load_ratio']:.2f})")
+
+    res = pd.DataFrame(rows)
+
+    # (Smooth, PeakQ, Load) runtime
+    res_sorted = res.sort_values(
+        by=["Smooth_ratio", "PeakQ_ratio", "Load_ratio", "runtime_s"],
+        ascending=[True, True, True, True]
+    ).reset_index(drop=True)
+
+    return res_sorted
+
+
+
 import numpy as np
 from pathlib import Path
 
@@ -1169,6 +1338,74 @@ def mpc_benchmark() -> None:
     )
     print(f"Stochastic MPC done in {time.perf_counter() - t0:.2f}s")
 
+
+    # ------------------------------------------------------------------
+    # LAO-pruned MPC
+    # ------------------------------------------------------------------
+    print("\nLAO-pruned MPC simulation...")
+    # t0 = time.perf_counter()
+    traj_lao_pruned = run_lao_pruned_mpc(
+        model=model,
+        x0=x0,
+        u0=u0,
+        qin_forecast=qin_f,
+        cin_forecast=cin_f,
+        MD_exec_true=MD_t,
+        horizon=horizon,
+        theta_candidates=theta_candidates,
+        hlimit_ft=hlimit_ft,
+        ckpt_path="saved_models/LAO_nets/lao_models_real_case.pt",  # <-- path to your trained checkpoint
+        hidden=256,                  # <-- match what you trained with (or ignore if ckpt stores it)
+        k_near=2,                   # <-- 5 -> 25 pairs (5x5) instead of 121
+        fallback_full_grid=True,    # <-- safe: if pruned set infeasible, use full grid
+    )
+    # print(f"LAO-pruned MPC done in {time.perf_counter() - t0:.2f}s")
+
+
+    print("\nLAO-terminal-value MPC simulation (short horizon)...")
+    t0 = time.perf_counter()
+    traj_lao_term = run_lao_terminal_value_mpc(
+        model=model,
+        x0=x0,
+        u0=u0,
+        qin_forecast=qin_f,
+        cin_forecast=cin_f,
+        MD_exec_true=MD_t,
+        horizon=24,                  
+        theta_candidates=theta_candidates,
+        hlimit_ft=hlimit_ft,
+        ckpt_path="saved_models/LAO_nets/lao_models_real_case.pt",
+        terminal_weight=0.5,         
+    )
+    print(f"LAO-terminal MPC done in {time.perf_counter() - t0:.2f}s")
+
+
+
+
+    # print("\n=== Tuning LAO-terminal (sweep) ===")
+    # tune_df = tuning_terminal_value(
+    #     model=model,
+    #     x0=x0, u0=u0,
+    #     qin_f=qin_f, cin_f=cin_f,
+    #     MD_t=MD_t,
+    #     theta_candidates=theta_candidates,
+    #     hlimit_ft=hlimit_ft,
+    #     traj_baseline=traj_mpc_ekf,
+    #     ckpt_path="saved_models/LAO_nets/lao_models_real_case.pt",
+    #     horizons=(24, 32, 48),
+    #     lambdas=(0.1, 0.2, 0.5, 1.0, 2.0),
+    # )
+
+    # print("\n=== Top 10 configs (sorted) ===")
+    # print(tune_df.head(10).to_string(index=False, float_format=lambda x: f"{x:,.4g}"))
+
+    # tune_df.to_csv("tuning_terminal_results_real_case.csv", index=False)
+    # print("\nSaved tuning table to tuning_terminal_results_real_case.csv")
+
+
+
+
+
     # ------------------------------------------------------------------
     # RBC baselines (use q_desired = max(truey))
     # ------------------------------------------------------------------
@@ -1190,11 +1427,13 @@ def mpc_benchmark() -> None:
         "RBC-Concentration": traj_rbc_con,
         "RBC-Outflow": traj_rbc_out,
         "RBC-Both": traj_rbc_both,
+        "LAO-pruned MPC": traj_lao_pruned,
+        "LAO-terminal-value MPC": traj_lao_term,
         "Passive": traj_passive,
     }
 
     save_trajs_npz(
-        out_path=base_dir / "results_trajs.npz",
+        out_path=base_dir / "results_trajs_real_case.npz",
         trajs=trajs,
         meta={
             "dt": model.dt,
@@ -1209,7 +1448,7 @@ def mpc_benchmark() -> None:
     # ------------------------------------------------------------------
     # Save
     # ------------------------------------------------------------------
-    out_path = base_dir / "mpc_benchmark_results.mat"
+    out_path = base_dir / "mpc_benchmark_results_real_case.mat"
     save_results(out_path, trajs, metrics, qin_t, cin_t, qin_f, cin_f)
 
 

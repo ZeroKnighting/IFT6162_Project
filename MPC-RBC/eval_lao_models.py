@@ -38,36 +38,6 @@ except Exception as e:
     raise ImportError("This script requires PyTorch. Install with: pip install torch") from e
 
 
-# ---------------------------
-# Models (must match training)
-# ---------------------------
-
-class ValueNet(nn.Module):
-    def __init__(self, in_dim: int = 2, hidden: int = 64):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, 1),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
-class PolicyNet(nn.Module):
-    def __init__(self, in_dim: int = 2, hidden: int = 64):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, 2),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
 
 # ---------------------------
 # IO
@@ -126,8 +96,8 @@ def pearsonr(a: np.ndarray, b: np.ndarray) -> float:
 
 @torch.no_grad()
 def infer(
-    pnet: PolicyNet,
-    vnet: ValueNet,
+    pnet,
+    vnet,
     X: np.ndarray,
     device: str,
     batch: int = 4096,
@@ -211,6 +181,7 @@ def main() -> None:
     ap.add_argument("--plots", action="store_true", help="Write scatter plots to --plot_dir")
     ap.add_argument("--plot_dir", type=str, default="eval_plots", help="Directory to save plots if --plots")
     ap.add_argument("--show_samples", type=int, default=8, help="Print a few (true/pred) samples")
+    ap.add_argument('--hidden', type=int, default=128, help='Hidden size of the model')
     args = ap.parse_args()
 
     device = "cuda" if (args.device == "auto" and torch.cuda.is_available()) else ("cpu" if args.device != "cuda" else "cuda")
@@ -233,14 +204,20 @@ def main() -> None:
     YV_val = YV_val[finite]
 
     # checkpoint params
-    hidden = int(ckpt.get("hidden", 128))
+    hidden = args.hidden
     v_mean = np.asarray(ckpt.get("v_mean", [[0.0]]), dtype=np.float64)
     v_std = np.asarray(ckpt.get("v_std", [[1.0]]), dtype=np.float64)
     v_transform = ckpt.get("value_transform", "none")
 
     # models
-    pnet = PolicyNet(in_dim=X_val.shape[1], hidden=hidden).to(device)
-    vnet = ValueNet(in_dim=X_val.shape[1], hidden=hidden).to(device)
+    if ("real_case" in args.data) or ("large" in args.ckpt):
+        from train_lao_nets import PolicyNet_real, ValueNet_real
+        pnet = PolicyNet_real(in_dim=X_val.shape[1], hidden=hidden).to(device)
+        vnet = ValueNet_real(in_dim=X_val.shape[1], hidden=hidden).to(device)
+    else:
+        from train_lao_nets import PolicyNet, ValueNet
+        pnet = PolicyNet(in_dim=X_val.shape[1], hidden=hidden).to(device)
+        vnet = ValueNet(in_dim=X_val.shape[1], hidden=hidden).to(device)
 
     pnet.load_state_dict(ckpt["policy_state_dict"])
     vnet.load_state_dict(ckpt["value_state_dict"])

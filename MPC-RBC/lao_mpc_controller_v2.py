@@ -84,7 +84,12 @@ def load_lao_policy(ckpt_path: str, hidden: int = 64, device: Optional[str] = No
     # Avoid divide-by-zero
     x_std = np.maximum(x_std, 1e-8)
 
-    policy = PolicyNet(in_dim=x_mean.shape[1], hidden=hidden).to(device)
+    if ("large" in ckpt_path.lower()) or ("real_case" in ckpt_path.lower()):
+        from train_lao_nets import PolicyNet_real, ValueNet_real
+        policy = PolicyNet_real(in_dim=x_mean.shape[1], hidden=hidden).to(device)
+    else:
+        policy = PolicyNet(in_dim=x_mean.shape[1], hidden=hidden).to(device)
+    # policy = PolicyNet(in_dim=x_mean.shape[1], hidden=hidden).to(device)
     policy.load_state_dict(ckpt[sd_key])
     policy.eval()
 
