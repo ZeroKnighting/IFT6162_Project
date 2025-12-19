@@ -1354,7 +1354,7 @@ def mpc_benchmark() -> None:
         horizon=horizon,
         theta_candidates=theta_candidates,
         hlimit_ft=hlimit_ft,
-        ckpt_path="saved_models/LAO_nets/lao_models_real_case.pt",  # <-- path to your trained checkpoint
+        ckpt_path="./MPC-RBC/saved_models/LAO_nets/lao_models_real_case.pt",  # <-- path to your trained checkpoint
         hidden=256,                  # <-- match what you trained with (or ignore if ckpt stores it)
         k_near=2,                   # <-- 5 -> 25 pairs (5x5) instead of 121
         fallback_full_grid=True,    # <-- safe: if pruned set infeasible, use full grid
@@ -1374,7 +1374,7 @@ def mpc_benchmark() -> None:
         horizon=24,                  
         theta_candidates=theta_candidates,
         hlimit_ft=hlimit_ft,
-        ckpt_path="saved_models/LAO_nets/lao_models_real_case.pt",
+        ckpt_path="./MPC-RBC/saved_models/LAO_nets/lao_models_real_case.pt",
         terminal_weight=0.5,         
     )
     print(f"LAO-terminal MPC done in {time.perf_counter() - t0:.2f}s")
@@ -1427,8 +1427,8 @@ def mpc_benchmark() -> None:
         "RBC-Concentration": traj_rbc_con,
         "RBC-Outflow": traj_rbc_out,
         "RBC-Both": traj_rbc_both,
-        "LAO-pruned MPC": traj_lao_pruned,
-        "LAO-terminal-value MPC": traj_lao_term,
+        "LAO-pruned_MPC": traj_lao_pruned,
+        "LAO-terminal-value_MPC": traj_lao_term,
         "Passive": traj_passive,
     }
 

@@ -75,7 +75,7 @@ def load_value_terminal_fn(
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    ckpt = torch.load(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
     if "value_state_dict" in ckpt:
         v_sd = ckpt["value_state_dict"]

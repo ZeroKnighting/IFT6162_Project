@@ -55,7 +55,7 @@ def load_lao_policy(ckpt_path: str, hidden: int = 64, device: Optional[str] = No
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    ckpt = torch.load(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
     # ---- policy weights key ----
     sd_key = _get_ckpt_key(ckpt, ("policy_state_dict", "policy", "policy_net"))
