@@ -1388,11 +1388,17 @@ def mpc_benchmark() -> None:
     print("\nRBC simulations...")
     q_desired_cfs = float(np.max(traj_mpc_true.qout_cfs))
     climit = 5.0
-
+    t0 = time.perf_counter()
     traj_rbc_out = rbc_outflow(model, MD_t, x0, q_desired_cfs=q_desired_cfs, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
-    traj_rbc_con = rbc_concentration(model, MD_t, x0, climit=climit, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
-    traj_rbc_both = rbc_both(model, MD_t, x0, climit=climit, q_desired_cfs=q_desired_cfs, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
+    print(f"RBC-outflow done in {time.perf_counter() - t0:.2f}s")
 
+    t0 = time.perf_counter()
+    
+    traj_rbc_con = rbc_concentration(model, MD_t, x0, climit=climit, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
+    print(f"RBC-concentration done in {time.perf_counter() - t0:.2f}s")
+    t0 = time.perf_counter()
+    traj_rbc_both = rbc_both(model, MD_t, x0, climit=climit, q_desired_cfs=q_desired_cfs, hlimit_ft=float(np.max(traj_mpc_true.h_ft)))
+    print(f"RBC-both done in {time.perf_counter() - t0:.2f}s")
     # ------------------------------------------------------------------
     # Compare
     # ------------------------------------------------------------------
